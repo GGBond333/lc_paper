@@ -76,9 +76,9 @@ class TimeSeriesClassifier(nn.Module):
         self.encoder = TimeSeriesEncoder(input_dim, hidden_dim, feature_dim)
         # self.encoder = MLSTMFCNEncoder(input_dim=input_dim)
         # self.feature_dim = 64 + 128  # lstm_hidden_dim + conv_out_channels
-        self.classifier = nn.Linear(self.feature_dim, num_classes)
+        # self.classifier = nn.Linear(self.feature_dim, num_classes)
         # 分类器，用于预测类别
-        # self.classifier = nn.Linear(feature_dim, num_classes)
+        self.classifier = nn.Linear(feature_dim, num_classes)
         # COCL损失函数
         self.cocl_loss = ContrastiveClusteringLoss(temperature, alpha)
         
