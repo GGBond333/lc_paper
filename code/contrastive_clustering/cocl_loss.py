@@ -91,10 +91,13 @@ class ContrastiveClusteringLoss(nn.Module):
         # 如果提供了标签，则添加交叉熵损失
         ce_loss = 0
         if labels is not None:
-            criterion = nn.CrossEntropyLoss()
-            logits = similarity_matrix  # 为简单起见，使用相似度作为logits
-            ce_loss = criterion(logits, labels)
-        
+            # criterion = nn.CrossEntropyLoss()
+            # logits = similarity_matrix  # 为简单起见，使用相似度作为logits
+            # ce_loss = criterion(logits, labels)
+            # 修改总损失返回：
+            total_loss = self.alpha * cocl_loss
+            return total_loss, ...
+
         # 总损失
         total_loss = self.alpha * cocl_loss + ce_loss
         

@@ -5,6 +5,38 @@ from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
 from sklearn.metrics import accuracy_score, roc_auc_score, f1_score, confusion_matrix
 from cocl_loss import ContrastiveClusteringLoss
+import torch.nn.functional as F
+
+
+class MLSTMFCNEncoder(nn.Module):
+    def __init__(self, input_dim, lstm_hidden_dim=64, conv_out_channels=128):
+        super(MLSTMFCNEncoder, self).__init__()
+        self.lstm = nn.LSTM(input_size=input_dim, hidden_size=lstm_hidden_dim, batch_first=True)
+
+        self.conv1 = nn.Conv1d(in_channels=input_dim, out_channels=conv_out_channels, kernel_size=8, padding=4)
+        self.bn1 = nn.BatchNorm1d(conv_out_channels)
+
+        self.conv2 = nn.Conv1d(in_channels=conv_out_channels, out_channels=conv_out_channels, kernel_size=5, padding=2)
+        self.bn2 = nn.BatchNorm1d(conv_out_channels)
+
+        self.conv3 = nn.Conv1d(in_channels=conv_out_channels, out_channels=conv_out_channels, kernel_size=3, padding=1)
+        self.bn3 = nn.BatchNorm1d(conv_out_channels)
+
+        self.global_pooling = nn.AdaptiveAvgPool1d(1)
+
+    def forward(self, x):  # x: [batch_size, seq_len, input_dim]
+        lstm_out, _ = self.lstm(x)  # [batch_size, seq_len, hidden_dim]
+        lstm_feat = lstm_out[:, -1, :]  # 最后时间步的隐藏状态
+
+        # FCN 分支: 需要将 input transpose 成 [batch_size, input_dim, seq_len]
+        x_permute = x.permute(0, 2, 1)
+        x = F.relu(self.bn1(self.conv1(x_permute)))
+        x = F.relu(self.bn2(self.conv2(x)))
+        x = F.relu(self.bn3(self.conv3(x)))
+        conv_feat = self.global_pooling(x).squeeze(-1)  # [batch_size, out_channels]
+
+        out = torch.cat([lstm_feat, conv_feat], dim=1)  # 拼接 LSTM 与 FCN 特征
+        return out  # [batch_size, lstm_hidden + conv_out]
 
 class TimeSeriesEncoder(nn.Module):
     """
@@ -42,8 +74,11 @@ class TimeSeriesClassifier(nn.Module):
         super(TimeSeriesClassifier, self).__init__()
         # 编码器，用于提取时间序列特征
         self.encoder = TimeSeriesEncoder(input_dim, hidden_dim, feature_dim)
+        # self.encoder = MLSTMFCNEncoder(input_dim=input_dim)
+        # self.feature_dim = 64 + 128  # lstm_hidden_dim + conv_out_channels
+        self.classifier = nn.Linear(self.feature_dim, num_classes)
         # 分类器，用于预测类别
-        self.classifier = nn.Linear(feature_dim, num_classes)
+        # self.classifier = nn.Linear(feature_dim, num_classes)
         # COCL损失函数
         self.cocl_loss = ContrastiveClusteringLoss(temperature, alpha)
         
@@ -90,8 +125,10 @@ def train_model(model, train_loader, val_loader, optimizer, num_epochs=100, devi
             data, target = data.to(device), target.to(device)
             
             optimizer.zero_grad()  # 清除梯度
-            logits, features, loss, loss_components = model(data, target)
-            
+            logits, features, cocl_loss_val, loss_components = model(data, target)
+            loss_ce = F.cross_entropy(logits, target)
+            loss = cocl_loss_val + loss_ce  # 总损失
+
             # 计算准确率
             _, predicted = torch.max(logits, 1)
             acc = (predicted == target).float().mean()
@@ -172,19 +209,30 @@ def evaluate_model(model, test_loader, device='cuda'):
     
     test_preds = []
     test_targets = []
-    
+    all_probs = []
+
     with torch.no_grad():
         for data, target in test_loader:
             data, target = data.to(device), target.to(device)
             logits, _, _, _ = model(data)
-            _, predicted = torch.max(logits, 1)
-            test_preds.extend(predicted.cpu().numpy())
+
+            probs = torch.softmax(logits, dim=1)[:, 1].cpu().numpy()
+            pred_labels = torch.argmax(logits, dim=1).cpu().numpy()
+
+            all_probs.extend(probs)
+            test_preds.extend(pred_labels)
             test_targets.extend(target.cpu().numpy())
-    
+
     test_targets_np = np.array(test_targets)
     test_preds_np = np.array(test_preds)
+    all_probs_np = np.array(all_probs)
+    
+    # Calculate metrics
     test_acc = accuracy_score(test_targets_np, test_preds_np)
     f1 = f1_score(test_targets_np, test_preds_np, average='binary')
+    
+    # Calculate AUC using all probabilities
+    auc = roc_auc_score(test_targets_np, all_probs_np)
     
     # 计算混淆矩阵
     cm = confusion_matrix(test_targets_np, test_preds_np, labels=[0, 1])
@@ -204,14 +252,6 @@ def evaluate_model(model, test_loader, device='cuda'):
             class_recall = np.sum((test_preds_np == c) & class_mask) / np.sum(class_mask)
             class_recalls.append(class_recall)
     min_recall = np.min(class_recalls) if class_recalls else 0.0
-
-    # AUC
-    auc = 0.0
-    if len(np.unique(test_targets_np)) == 2:
-        try:
-            auc = roc_auc_score(test_targets_np, test_preds_np)
-        except:
-            pass
 
     return {
         'accuracy': test_acc,

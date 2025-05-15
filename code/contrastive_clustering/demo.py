@@ -173,18 +173,20 @@ def load_wafer_dataset(train_file, test_file):
     
     # 将类别重新映射为二分类问题
     # 将所有负类映射为0，所有正类映射为1
-    y_train = np.where(y_train < 0, 0, 1)
-    y_test = np.where(y_test < 0, 0, 1)
-    
+    # 显式将正类设置为 0，负类为 1（符合论文设定）
+    y_train = np.where(y_train > 0, 0, 1)
+    y_test = np.where(y_test > 0, 0, 1)
+
     # 重塑数据为3D张量 [samples, sequence_length, features]
     n_samples_train = X_train.shape[0]
     n_samples_test = X_test.shape[0]
     seq_len = 1  # 每个样本是一个时间点
     n_features = X_train.shape[1]  # 特征数
-    
-    X_train = X_train.reshape(n_samples_train, seq_len, n_features)
-    X_test = X_test.reshape(n_samples_test, seq_len, n_features)
-    
+
+    # 将每个样本看作长度为 n_features 的时间序列，单通道特征
+    X_train = X_train.reshape(n_samples_train, n_features, 1)
+    X_test = X_test.reshape(n_samples_test, n_features, 1)
+
     # 打印处理后的类别分布
     print("\n处理后的训练集类别分布:")
     for c in np.unique(y_train):
