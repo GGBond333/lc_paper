@@ -130,4 +130,4 @@ class MLSTM_FCN(nn.Module):
         # 输出层
         output = self.fc(x_combined)
         
-        return output
+        return F.softmax(output, dim=1)
