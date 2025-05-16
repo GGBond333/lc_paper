@@ -174,8 +174,13 @@ def load_wafer_dataset(train_file, test_file):
     # 将类别重新映射为二分类问题
     # 将所有负类映射为0，所有正类映射为1
     # 显式将正类设置为 0，负类为 1（符合论文设定）
-    y_train = np.where(y_train > 0, 0, 1)
-    y_test = np.where(y_test > 0, 0, 1)
+    #y_train = np.where(y_train > 0, 0, 1)
+    #y_test = np.where(y_test > 0, 0, 1)
+    # 指定要标记为1的类别列表
+    #min_classes = [1]
+    # 创建一个新的标签数组，将指定的类别标记为1，其他类别标记为0
+    #y_train = np.where(np.isin(y_train, min_classes), 1, 0)
+    #y_test = np.where(np.isin(y_test, min_classes), 1, 0)
 
     # 重塑数据为3D张量 [samples, sequence_length, features]
     n_samples_train = X_train.shape[0]
@@ -200,10 +205,10 @@ def main():
     torch.manual_seed(42)
     
     # 加载Wafer数据集
-    print("加载Wafer数据集...")
+    print("加载数据集...")
     X_train, y_train, X_test, y_test = load_wafer_dataset(
-        'Wafer_TRAIN.tsv',
-        'Wafer_TEST.tsv'
+        'dataset/UWaveGestureLibraryAll_TRAIN.tsv',
+        'dataset/UWaveGestureLibraryAll_TEST.tsv'
     )
     
     # 分割训练集为训练集和验证集
@@ -263,7 +268,7 @@ def main():
         train_loader=train_loader,
         val_loader=val_loader,
         optimizer=optimizer,
-        num_epochs=120,
+        num_epochs=20,
         device=device
     )
     
