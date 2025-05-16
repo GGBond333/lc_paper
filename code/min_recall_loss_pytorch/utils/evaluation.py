@@ -1,8 +1,10 @@
 import numpy as np
 import torch
 import torch.nn as nn
-from sklearn.metrics import confusion_matrix, accuracy_score
+from sklearn.metrics import confusion_matrix, accuracy_score, f1_score
 import matplotlib.pyplot as plt
+from sklearn.metrics import roc_auc_score
+import torch.nn.functional as F
 
 def calculate_recalls(y_true, y_pred):
     """
@@ -89,7 +91,7 @@ def evaluate_model(model, test_loader, device):
         device: 计算设备
         
     返回:
-        (accuracy, min_recall, recalls) 准确率、最小召回率和每个类别的召回率
+        (accuracy, min_recall, recalls, auc, f1, gmean, precision) 准确率、最小召回率、每个类别的召回率、AUC、F1分数、G-mean和精确率
     """
     model.eval()
     all_preds = []
@@ -110,29 +112,82 @@ def evaluate_model(model, test_loader, device):
     accuracy = accuracy_score(all_targets, all_preds)
     recalls = calculate_recalls(all_targets, all_preds)
     min_recall = np.min(recalls)
-    
-    return accuracy, min_recall, recalls
 
-def train_model(model, train_loader, val_loader, criterion, optimizer, device, num_epochs=50, patience=10):
+    # 计算F1分数
+    f1 = f1_score(all_targets, all_preds, average='binary')
+
+    # 计算混淆矩阵
+    cm = confusion_matrix(all_targets, all_preds, labels=[0, 1])
+    if cm.shape == (2, 2):
+        TN, FP, FN, TP = cm.ravel()
+        recall = TP / (TP + FN) if (TP + FN) > 0 else 0.0
+        specificity = TN / (TN + FP) if (TN + FP) > 0 else 0.0
+        gmean = np.sqrt(recall * specificity)
+        precision = TP / (TP + FP) if (TP + FP) > 0 else 0.0
+    else:
+        recall = specificity = gmean = precision = 0.0
+
+    y_probs = []
+    for inputs, _ in test_loader:
+        inputs = inputs.to(device)
+        with torch.no_grad():
+            outputs = model(inputs)
+            prob = F.softmax(outputs, dim=1)
+            y_probs.append(prob.cpu().numpy())
+    y_probs = np.concatenate(y_probs)
+    try:
+        auc = roc_auc_score(all_targets, y_probs[:, 1])  # 假设类别0是负类，1是正类
+    except ValueError:
+        auc = 0.0  # 防止某类样本全为空时异常
+
+    return accuracy, min_recall, recalls, auc, f1, gmean, precision
+
+def train_model(model, train_loader, criterion, optimizer, device, num_epochs=50, patience=10, val_ratio=0.2):
     """
     训练模型
     
     参数:
         model: PyTorch模型
         train_loader: 训练数据加载器
-        val_loader: 验证数据加载器
+        test_loader: 测试数据加载器
         criterion: 损失函数
         optimizer: 优化器
         device: 计算设备
         num_epochs: 训练轮数
         patience: 早停耐心值
+        val_ratio: 验证集比例
         
     返回:
         训练历史记录
     """
+    # 从训练集中划分出验证集
+    dataset = train_loader.dataset
+    n_samples = len(dataset)
+    indices = list(range(n_samples))
+    np.random.shuffle(indices)
+    val_size = int(n_samples * val_ratio)
+    train_indices = indices[val_size:]
+    val_indices = indices[:val_size]
+    
+    # 创建训练集和验证集的数据加载器
+    train_sampler = torch.utils.data.SubsetRandomSampler(train_indices)
+    val_sampler = torch.utils.data.SubsetRandomSampler(val_indices)
+    
+    train_loader = torch.utils.data.DataLoader(
+        dataset, 
+        batch_size=train_loader.batch_size,
+        sampler=train_sampler
+    )
+    val_loader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=train_loader.batch_size,
+        sampler=val_sampler
+    )
+    
     # 初始化最佳验证损失和耐心计数器
     best_val_loss = float('inf')
     patience_counter = 0
+    best_model_state = None
     
     # 初始化历史记录
     history = {
@@ -173,49 +228,53 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, device, n
         # 验证阶段
         model.eval()
         val_loss = 0.0
+        all_preds = []
+        all_targets = []
         
         with torch.no_grad():
             for inputs, targets in val_loader:
                 inputs, targets = inputs.to(device), targets.to(device)
-                
-                # 前向传播
                 outputs = model(inputs)
-                
-                # 计算损失
                 loss = criterion(outputs, targets)
-                
                 val_loss += loss.item() * inputs.size(0)
+                
+                _, preds = torch.max(outputs, 1)
+                all_preds.append(preds.cpu().numpy())
+                all_targets.append(torch.argmax(targets, dim=1).cpu().numpy())
         
-        # 计算平均验证损失
+        # 计算验证指标
         val_loss = val_loss / len(val_loader.dataset)
-        history['val_loss'].append(val_loss)
+        all_preds = np.concatenate(all_preds)
+        all_targets = np.concatenate(all_targets)
         
-        # 评估模型性能
-        val_accuracy, val_min_recall, _ = evaluate_model(model, val_loader, device)
+        val_accuracy = accuracy_score(all_targets, all_preds)
+        val_min_recall = calculate_min_recall(all_targets, all_preds)
+        
+        history['val_loss'].append(val_loss)
         history['val_accuracy'].append(val_accuracy)
         history['val_min_recall'].append(val_min_recall)
         
-        # 打印进度
-        print(f'Epoch {epoch+1}/{num_epochs} | '
-              f'Train Loss: {train_loss:.4f} | '
-              f'Val Loss: {val_loss:.4f} | '
-              f'Val Accuracy: {val_accuracy:.4f} | '
-              f'Val Min Recall: {val_min_recall:.4f}')
+        # 打印训练进度
+        print(f'Epoch {epoch+1}/{num_epochs}:')
+        print(f'  Train Loss: {train_loss:.4f}')
+        print(f'  Val Loss: {val_loss:.4f}')
+        print(f'  Val Accuracy: {val_accuracy:.4f}')
+        print(f'  Val Min Recall: {val_min_recall:.4f}')
         
         # 早停检查
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             patience_counter = 0
-            # 保存最佳模型
-            torch.save(model.state_dict(), 'best_model.pth')
+            best_model_state = model.state_dict().copy()
         else:
             patience_counter += 1
             if patience_counter >= patience:
-                print(f'Early stopping at epoch {epoch+1}')
+                print(f'Early stopping triggered after {epoch+1} epochs')
                 break
     
-    # 加载最佳模型
-    model.load_state_dict(torch.load('best_model.pth'))
+    # 恢复最佳模型
+    if best_model_state is not None:
+        model.load_state_dict(best_model_state)
     
     return history
 

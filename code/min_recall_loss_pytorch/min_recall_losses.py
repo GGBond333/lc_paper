@@ -18,32 +18,31 @@ class MeanRecallLoss(nn.Module):
         super(MeanRecallLoss, self).__init__()
     
     def forward(self, y_pred, y_true):
-        # 获取预测的类别和真实的类别
-        y_pred_classes = torch.argmax(y_pred, dim=1)
-        y_true_classes = torch.argmax(y_true, dim=1)
-        
         # 获取类别数量
         num_classes = y_true.size(1)
         
         # 计算每个类别的召回率
         recalls = []
         for i in range(num_classes):
-            # 找出属于当前类别的样本
-            true_class_mask = (y_true_classes == i)
+            # 获取当前类别的真实标签
+            true_class = y_true[:, i]
             
             # 如果没有该类别的样本，则跳过
-            if torch.sum(true_class_mask) == 0:
+            if torch.sum(true_class) == 0:
                 continue
-                
-            # 计算这些样本中被正确分类的比例
-            class_recall = torch.mean((y_pred_classes[true_class_mask] == i).float())
+            
+            # 计算当前类别的预测概率
+            pred_probs = y_pred[:, i]
+            
+            # 计算召回率：正确预测的概率之和除以该类的样本数
+            class_recall = torch.sum(pred_probs * true_class) / (torch.sum(true_class) + 1e-7)
             recalls.append(class_recall)
         
         # 计算所有召回率的平均值
         if len(recalls) > 0:
             mean_recall = torch.stack(recalls).mean()
         else:
-            mean_recall = torch.tensor(0.0, device=y_pred.device)
+            mean_recall = torch.tensor(0.0, device=y_pred.device, requires_grad=True)
         
         # 返回负值，因为我们要最大化召回率（而PyTorch默认最小化损失）
         return -mean_recall
@@ -63,25 +62,24 @@ class ProductRecallLoss(nn.Module):
         super(ProductRecallLoss, self).__init__()
     
     def forward(self, y_pred, y_true):
-        # 获取预测的类别和真实的类别
-        y_pred_classes = torch.argmax(y_pred, dim=1)
-        y_true_classes = torch.argmax(y_true, dim=1)
-        
         # 获取类别数量
         num_classes = y_true.size(1)
         
         # 计算每个类别的召回率
         recalls = []
         for i in range(num_classes):
-            # 找出属于当前类别的样本
-            true_class_mask = (y_true_classes == i)
+            # 获取当前类别的真实标签
+            true_class = y_true[:, i]
             
             # 如果没有该类别的样本，则跳过
-            if torch.sum(true_class_mask) == 0:
+            if torch.sum(true_class) == 0:
                 continue
-                
-            # 计算这些样本中被正确分类的比例
-            class_recall = torch.mean((y_pred_classes[true_class_mask] == i).float())
+            
+            # 计算当前类别的预测概率
+            pred_probs = y_pred[:, i]
+            
+            # 计算召回率：正确预测的概率之和除以该类的样本数
+            class_recall = torch.sum(pred_probs * true_class) / (torch.sum(true_class) + 1e-7)
             # 添加一个小的epsilon值避免乘积为0
             recalls.append(class_recall + 1e-7)
         
@@ -89,7 +87,7 @@ class ProductRecallLoss(nn.Module):
         if len(recalls) > 0:
             product_recall = torch.prod(torch.stack(recalls))
         else:
-            product_recall = torch.tensor(0.0, device=y_pred.device)
+            product_recall = torch.tensor(0.0, device=y_pred.device, requires_grad=True)
         
         # 返回负值用于最小化损失
         return -product_recall
@@ -111,30 +109,29 @@ class SoftmaxRecallLoss(nn.Module):
         self.alpha = alpha
     
     def forward(self, y_pred, y_true):
-        # 获取预测的类别和真实的类别
-        y_pred_classes = torch.argmax(y_pred, dim=1)
-        y_true_classes = torch.argmax(y_true, dim=1)
-        
         # 获取类别数量
         num_classes = y_true.size(1)
         
         # 计算每个类别的召回率
         recalls = []
         for i in range(num_classes):
-            # 找出属于当前类别的样本
-            true_class_mask = (y_true_classes == i)
+            # 获取当前类别的真实标签
+            true_class = y_true[:, i]
             
             # 如果没有该类别的样本，则跳过
-            if torch.sum(true_class_mask) == 0:
+            if torch.sum(true_class) == 0:
                 continue
-                
-            # 计算这些样本中被正确分类的比例
-            class_recall = torch.mean((y_pred_classes[true_class_mask] == i).float())
+            
+            # 计算当前类别的预测概率
+            pred_probs = y_pred[:, i]
+            
+            # 计算召回率：正确预测的概率之和除以该类的样本数
+            class_recall = torch.sum(pred_probs * true_class) / (torch.sum(true_class) + 1e-7)
             recalls.append(class_recall)
         
         # 如果没有有效的召回率，返回0
         if len(recalls) == 0:
-            return torch.tensor(0.0, device=y_pred.device)
+            return torch.tensor(0.0, device=y_pred.device, requires_grad=True)
             
         # 将召回率转换为张量
         recalls_tensor = torch.stack(recalls)
@@ -217,30 +214,29 @@ class PNormRecallLoss(nn.Module):
         self.alpha = alpha
     
     def forward(self, y_pred, y_true):
-        # 获取预测的类别和真实的类别
-        y_pred_classes = torch.argmax(y_pred, dim=1)
-        y_true_classes = torch.argmax(y_true, dim=1)
-        
         # 获取类别数量
         num_classes = y_true.size(1)
         
         # 计算每个类别的召回率
         recalls = []
         for i in range(num_classes):
-            # 找出属于当前类别的样本
-            true_class_mask = (y_true_classes == i)
+            # 获取当前类别的真实标签
+            true_class = y_true[:, i]
             
             # 如果没有该类别的样本，则跳过
-            if torch.sum(true_class_mask) == 0:
+            if torch.sum(true_class) == 0:
                 continue
-                
-            # 计算这些样本中被正确分类的比例
-            class_recall = torch.mean((y_pred_classes[true_class_mask] == i).float())
+            
+            # 计算当前类别的预测概率
+            pred_probs = y_pred[:, i]
+            
+            # 计算召回率：正确预测的概率之和除以该类的样本数
+            class_recall = torch.sum(pred_probs * true_class) / (torch.sum(true_class) + 1e-7)
             recalls.append(class_recall)
         
         # 如果没有有效的召回率，返回0
         if len(recalls) == 0:
-            return torch.tensor(0.0, device=y_pred.device)
+            return torch.tensor(0.0, device=y_pred.device, requires_grad=True)
             
         # 将召回率转换为张量
         recalls_tensor = torch.stack(recalls)
